@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cloud-switches-control"
+version = "0.1.0"
+description = "Headless PoE control for CloudManagedSwtch devices"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "OpenAI Codex" },
+]
+keywords = ["poe", "switch", "cloudmanagedswtch", "orange-pi", "headless"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: System :: Networking",
+  "Topic :: System :: Systems Administration",
+]
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+switch-poe = "cloud_switches_control.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cloud_switches_control"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

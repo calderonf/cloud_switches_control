@@ -21,16 +21,46 @@ It defaults to the 4-PoE-port mapping observed on the tested switch:
 
 ## Installation
 
-Local editable install:
+### Orange Pi / Debian / Ubuntu
+
+Recent Debian-based distributions protect the system Python and reject a global
+`pip install` with `externally-managed-environment`. Install this project in a
+virtual environment instead. This keeps the operating system Python untouched.
 
 ```bash
-python3 -m pip install -e .
+sudo apt update
+sudo apt install -y python3-venv
+git clone https://github.com/calderonf/cloud_switches_control.git
+cd cloud_switches_control
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .
+switch-poe 5C15C5088EE3 status
 ```
 
-Install test dependencies too:
+The `switch-poe` command is available while the environment is active. In a
+new terminal, enter the project directory and activate it again:
 
 ```bash
-python3 -m pip install -e '.[test]'
+cd ~/cloud_switches_control
+. .venv/bin/activate
+switch-poe 5C15C5088EE3 status
+```
+
+You can also call it without activating the environment:
+
+```bash
+~/cloud_switches_control/.venv/bin/switch-poe 5C15C5088EE3 status
+```
+
+Do not use `--break-system-packages`; it can damage packages managed by `apt`.
+
+### Development and Tests
+
+Install test dependencies in the same active virtual environment:
+
+```bash
+python -m pip install -e '.[test]'
 ```
 
 ## CLI Usage

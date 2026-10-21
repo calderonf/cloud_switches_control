@@ -1,12 +1,15 @@
 # cloud-switches-control
 
-Headless PoE control for CloudManagedSwtch devices from Linux, Orange Pi, or any other machine without a GUI.
+Headless LAN PoE control for administrable switches from Linux, Orange Pi, or
+any other machine without a GUI.
 
-The main use case is restarting PoE on one physical port when a camera hangs, without rebooting the whole switch and without depending on Chrome, a mobile app, or the web UI.
+The main use case is restarting PoE on one physical port when a camera hangs,
+without rebooting the whole switch and without depending on a browser, mobile
+app, or web UI.
 
 ## Status
 
-This project is tailored to CloudManagedSwtch devices that expose:
+This project is tailored to administrable switches that expose:
 
 - `POST /123` for login
 - `POST /101` for status
@@ -77,7 +80,7 @@ Optional environment variables:
 
 ```bash
 export SWITCH_PASSWORD='your-password'
-export SWITCH_SESSION_CACHE='/tmp/cloud-managed-switch.cookie'
+export SWITCH_SESSION_CACHE='/tmp/managed-switch.cookie'
 ```
 
 ### Read Full Status
@@ -126,6 +129,33 @@ switch-poe 192.168.0.220 status --pw
 switch-poe 192.168.0.220 status --tp
 switch-poe 192.168.0.220 status --vol
 ```
+
+### Read Telemetry for One Physical Port
+
+The switch reports arrays in internal protocol order. To avoid manually
+reversing that order, ask for a physical port directly:
+
+```bash
+switch-poe 192.168.0.220 status --port 4
+```
+
+Example output:
+
+```json
+{
+  "physical_port": 4,
+  "internal_index": 0,
+  "pw": "2.2",
+  "link": 4,
+  "tx": "72",
+  "rx": "2128",
+  "poec": 1,
+  "phyc": 4
+}
+```
+
+`tx` and `rx` are preserved exactly as the switch reports them. Their unit and
+sampling interval are device-specific and are not assumed by this tool.
 
 By default the CLI stays quiet and prints only the requested JSON result when the command succeeds. If you want informative logs such as MAC resolution, first-time activation detection, or login success, add `-v`:
 
@@ -192,6 +222,13 @@ switch-poe 5C15C5088EDA restart --port 2 --delay 5
 - Warnings and errors still print by default.
 - After a PoE change, the tool waits briefly and polls `/101` because some switches apply the change before they report the new state.
 - On the tested model, `poec` appears to be reported in internal index order, so port verification is mapped through `portIndex`.
+- Some firmware accepts only one active administrative session. Close an open
+  browser tab before starting a new CLI session, and leave session caching
+  enabled so later commands reuse the same cookie instead of repeatedly
+  logging in.
+- Read requests default to a single attempt. You can raise `--retries` for a
+  deliberate diagnostic read; PoE configuration requests are never retried
+  automatically.
 - MAC lookup uses the local Linux neighbor table (`ip neigh`, `/proc/net/arp`, `arp -an`).
 - If the controlling device is physically connected to port 1, turning off or restarting port 1 can cut your own connectivity to the switch.
 
@@ -204,15 +241,15 @@ switch-poe 192.168.0.220 --port-index 3,2,1,0 status
 switch-poe -v 192.168.0.220 status
 switch-poe 192.168.0.220 --log-level DEBUG status
 switch-poe 192.168.0.220 --command-settle-delay 2 --verify-timeout 30 status
-switch-poe 192.168.0.220 --session-cache-path /tmp/cloud-managed-switch.cookie poe --port 1 --on
+switch-poe 192.168.0.220 --session-cache-path /tmp/managed-switch.cookie poe --port 1 --on
 ```
 
 ## Python Usage
 
 ```python
-from cloud_switches_control import CloudManagedSwtch
+from cloud_switches_control import ManagedSwitch
 
-sw = CloudManagedSwtch("192.168.0.220", password="your-password")
+sw = ManagedSwitch("192.168.0.220", password="your-password")
 print(sw.status())
 sw.restart_poe(port=1, delay=5)
 ```
@@ -220,18 +257,18 @@ sw.restart_poe(port=1, delay=5)
 If you omit `password`, the Python client also falls back to `123456`:
 
 ```python
-from cloud_switches_control import CloudManagedSwtch
+from cloud_switches_control import ManagedSwitch
 
-sw = CloudManagedSwtch("192.168.0.220")
+sw = ManagedSwitch("192.168.0.220")
 print(sw.status())
 ```
 
 Resolve the switch by MAC instead of hardcoding the IP:
 
 ```python
-from cloud_switches_control import CloudManagedSwtch
+from cloud_switches_control import ManagedSwitch
 
-sw = CloudManagedSwtch.from_mac("5C15C5088EDA", password="your-password")
+sw = ManagedSwitch.from_mac("5C15C5088EDA", password="your-password")
 print(sw.status())
 sw.restart_poe(port=2, delay=5)
 ```
@@ -290,13 +327,14 @@ Where:
 - `value = 1` means PoE ON
 - `internal_index = portIndex[physical_port - 1]`
 
-## Notes About the `lwIP` HTTP Bug
+## Notes About the Embedded `lwIP` Web Server
 
 The embedded server has shown inconsistent behavior with normal CLI clients:
 
 - `curl` may succeed once and then fail with `Empty reply from server`
 - `requests` can fail with `RemoteDisconnected`
-- the browser UI works more reliably than naive HTTP scripts
+- opening a second administrative session can cause the device to close the
+  request without a response body
 
 To improve compatibility, this library:
 
@@ -306,10 +344,11 @@ To improve compatibility, this library:
 - preserves any cookie returned by the login response
 - reuses the session cookie across separate CLI invocations by default
 - can resolve the switch IP from its MAC using the local ARP/neighbor table
-- retries requests with short sleeps
+- defaults reads to one attempt so a fragile web server is not flooded
 - falls back from `http.client` to a raw TCP socket HTTP implementation
 - can try operational endpoints before forcing a fresh login when the login endpoint is unstable
 - validates JSON and `errcode == 0` on every response
+- never retries a PoE configuration request automatically
 - verifies the final PoE state after `poe` and `restart` with polling instead of a single immediate check
 
 ## Project Layout

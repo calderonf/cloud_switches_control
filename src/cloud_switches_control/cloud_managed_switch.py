@@ -253,8 +253,33 @@ def poe_state_for_port(
         ) from exc
 
 
+def port_telemetry_for_port(
+    status: dict[str, Any],
+    port: int,
+    port_index: Optional[Sequence[int]] = None,
+) -> dict[str, Any]:
+    """Return status arrays mapped to one physical port.
+
+    The switch reports its arrays in protocol order, which may not match the
+    labels printed on the chassis. Values are retained as reported: in
+    particular, ``tx`` and ``rx`` have no assumed unit or time interval.
+    """
+    mapping = normalize_port_index(port_index)
+    if port < 1 or port > len(mapping):
+        raise SwitchProtocolError(f"port {port} is outside configured port_index range")
+    internal_index = mapping[port - 1]
+    result: dict[str, Any] = {"physical_port": port, "internal_index": internal_index}
+    for field in ("pw", "link", "tx", "rx", "poec", "phyc"):
+        value = status.get(field)
+        if not isinstance(value, list) or internal_index >= len(value):
+            result[field] = None
+            continue
+        result[field] = value[internal_index]
+    return result
+
+
 class CloudManagedSwtch:
-    """Headless controller for cloud-managed PoE switches."""
+    """Headless LAN controller for managed PoE switches."""
 
     def __init__(
         self,
@@ -264,7 +289,7 @@ class CloudManagedSwtch:
         mac: Optional[str] = None,
         http_port: int = 80,
         timeout: float = 5.0,
-        retries: int = 3,
+        retries: int = 1,
         retry_delay: float = 1.0,
         port_index: Optional[Sequence[int]] = None,
         warmup: bool = True,
@@ -379,7 +404,11 @@ class CloudManagedSwtch:
     def set_poe(self, port: int, enabled: bool, *, verify: bool = True) -> dict[str, Any]:
         self._validate_port(port)
         opcode = opcode_for_poe(port, enabled, self.port_index)
-        response = self._request_json(POE_COMMAND, {"opcode": opcode})
+        response = self._request_json(
+            POE_COMMAND,
+            {"opcode": opcode},
+            max_attempts=1,
+        )
 
         if response.get("config") != "ok":
             raise SwitchCommandError(f"unexpected PoE config response: {response!r}")
@@ -474,10 +503,14 @@ class CloudManagedSwtch:
         warmup: bool = False,
         allow_transport_fallback: bool = True,
         allow_login_fallback: bool = True,
+        max_attempts: Optional[int] = None,
     ) -> dict[str, Any]:
         last_error: Optional[BaseException] = None
+        attempts = self.retries if max_attempts is None else max_attempts
+        if attempts < 1:
+            raise ValueError("max_attempts must be >= 1")
 
-        for attempt in range(1, self.retries + 1):
+        for attempt in range(1, attempts + 1):
             try:
                 if allow_login_fallback and authenticate and not self._logged_in:
                     try:
@@ -509,18 +542,18 @@ class CloudManagedSwtch:
                 if callcmd != LOGIN_COMMAND:
                     self._logged_in = False
                     self._refresh_host_if_needed()
-                if attempt >= self.retries:
+                if attempt >= attempts:
                     break
                 self.logger.warning(
                     "callcmd=%s attempt=%s/%s failed: %s",
                     callcmd,
                     attempt,
-                    self.retries,
+                    attempts,
                     exc,
                 )
                 time.sleep(self.retry_delay)
 
-        message = f"callcmd {callcmd} failed after {self.retries} attempts"
+        message = f"callcmd {callcmd} failed after {attempts} attempts"
         raise SwitchTransportError(message) from last_error
 
     def _send_request(

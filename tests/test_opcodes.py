@@ -2,6 +2,7 @@ import logging
 
 import pytest
 
+from cloud_switches_control import ManagedSwitch
 from cloud_switches_control.cli import (
     _extract_status_output,
     _normalize_legacy_target_argv,
@@ -14,6 +15,7 @@ from cloud_switches_control.cloud_managed_switch import (
     SwitchResolutionError,
     normalize_mac,
     opcode_for_poe,
+    port_telemetry_for_port,
     poe_state_for_port,
     resolve_host_for_mac,
 )
@@ -112,6 +114,31 @@ def test_poe_state_uses_internal_port_order() -> None:
     assert poe_state_for_port(status, 4, [3, 2, 1, 0]) == 1
 
 
+def test_port_telemetry_maps_all_values_to_the_physical_port() -> None:
+    result = port_telemetry_for_port(
+        {
+            "pw": ["2.2", "1.4", "0", "0"],
+            "link": [4, 4, 0, 0, 5],
+            "tx": [72, 0, 0, 0],
+            "rx": [2128, 0, 0, 0],
+            "poec": [1, 1, 1, 1],
+            "phyc": [4, 4, 5, 5, 5],
+        },
+        4,
+    )
+
+    assert result == {
+        "physical_port": 4,
+        "internal_index": 0,
+        "pw": "2.2",
+        "link": 4,
+        "tx": 72,
+        "rx": 2128,
+        "poec": 1,
+        "phyc": 4,
+    }
+
+
 def test_normalize_mac_accepts_common_formats() -> None:
     assert normalize_mac("5C15C5088EDA") == "5C15C5088EDA"
     assert normalize_mac("5c:15:c5:08:8e:da") == "5C15C5088EDA"
@@ -166,6 +193,26 @@ def test_switch_uses_default_password_when_omitted() -> None:
     switch = CloudManagedSwtch("192.168.0.220")
 
     assert switch.password == "123456"
+    assert switch.retries == 1
+
+
+def test_managed_switch_is_the_preferred_public_alias() -> None:
+    assert ManagedSwitch is CloudManagedSwtch
+
+
+def test_poe_command_is_never_retried_automatically(monkeypatch) -> None:
+    switch = CloudManagedSwtch("192.168.0.220", retries=5)
+    calls = []
+
+    def fake_request(callcmd, calldata=None, **kwargs):
+        calls.append((callcmd, calldata, kwargs))
+        return {"config": "ok"}
+
+    monkeypatch.setattr(switch, "_request_json", fake_request)
+
+    switch.set_poe(port=4, enabled=True, verify=False)
+
+    assert calls == [(103, {"opcode": 514}, {"max_attempts": 1})]
 
 
 def test_login_logs_initialization_when_switch_is_not_active(monkeypatch, caplog) -> None:
@@ -228,6 +275,7 @@ def test_cli_rewrites_positional_mac_target() -> None:
 def test_extract_status_output_returns_full_status_by_default() -> None:
     class Args:
         tx = rx = poec = link = pw = tp = vol = False
+        port = None
 
     status = {"tx": ["1"], "vol": "52.8"}
 
@@ -238,10 +286,28 @@ def test_extract_status_output_returns_requested_field() -> None:
     class Args:
         tx = True
         rx = poec = link = pw = tp = vol = False
+        port = None
 
     status = {"tx": ["0", "0", "56", "0", "40"], "vol": "52.8"}
 
     assert _extract_status_output(Args(), status) == ["0", "0", "56", "0", "40"]
+
+
+def test_extract_status_output_maps_requested_physical_port() -> None:
+    class Args:
+        tx = rx = poec = link = pw = tp = vol = False
+        port = 4
+
+    status = {
+        "pw": ["2.2", "1.4", "0", "0"],
+        "link": [4, 4, 0, 0, 5],
+        "tx": [72, 0, 0, 0],
+        "rx": [2128, 0, 0, 0],
+        "poec": [1, 1, 1, 1],
+        "phyc": [4, 4, 5, 5, 5],
+    }
+
+    assert _extract_status_output(Args(), status, (3, 2, 1, 0))["rx"] == 2128
 
 
 def test_resolve_log_level_defaults_to_warning() -> None:

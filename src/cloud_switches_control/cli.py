@@ -12,13 +12,14 @@ from .cloud_managed_switch import (
     CloudManagedSwtch,
     SwitchError,
     opcode_for_poe,
+    port_telemetry_for_port,
 )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="switch-poe",
-        description="Headless PoE control for cloud-managed switches",
+        description="Headless LAN PoE control for managed switches",
     )
     parser.add_argument("--host", help="Switch IP or hostname")
     parser.add_argument("--mac", help="Switch MAC address, e.g. 5C15C5088EDA")
@@ -45,8 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--retries",
         type=int,
-        default=3,
-        help="How many times to retry each command (default: 3)",
+        default=1,
+        help="How many times to retry read requests (default: 1)",
     )
     parser.add_argument(
         "--retry-delay",
@@ -115,6 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
     status_fields.add_argument("--pw", action="store_true", help="Return only the per-port power list")
     status_fields.add_argument("--tp", action="store_true", help="Return only total power usage")
     status_fields.add_argument("--vol", action="store_true", help="Return only the reported voltage")
+    status_fields.add_argument(
+        "--port",
+        type=int,
+        help="Return mapped telemetry for one physical PoE port",
+    )
 
     poe_parser = subparsers.add_parser("poe", help="Enable or disable PoE on one port")
     poe_parser.add_argument("--port", type=int, required=True, help="Physical PoE port number")
@@ -169,7 +175,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
 
         if args.command == "status":
-            result = _extract_status_output(args, switch.status())
+            result = _extract_status_output(args, switch.status(), switch.port_index)
         elif args.command == "poe":
             enabled = bool(args.on)
             result = {
@@ -215,7 +221,14 @@ def _resolve_log_level(args: argparse.Namespace) -> str:
     return "WARNING"
 
 
-def _extract_status_output(args: argparse.Namespace, status: dict) -> object:
+def _extract_status_output(
+    args: argparse.Namespace,
+    status: dict,
+    port_index: Optional[Sequence[int]] = None,
+) -> object:
+    physical_port = getattr(args, "port", None)
+    if physical_port is not None:
+        return port_telemetry_for_port(status, physical_port, port_index)
     for field_name in ("tx", "rx", "poec", "link", "pw", "tp", "vol"):
         if getattr(args, field_name, False):
             return status.get(field_name)
